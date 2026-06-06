@@ -1,5 +1,5 @@
 // CasaCompare - Background Service Worker (no ES module exports)
-const WEBAPP_URL = 'http://localhost:3001';
+const WEBAPP_URL = 'http://localhost:3000';
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'PROPERTY_PAGE_DETECTED') {

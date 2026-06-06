@@ -1,4 +1,4 @@
-const WEBAPP_URL = 'http://localhost:3001';
+const WEBAPP_URL = 'http://localhost:3000';
 const content = document.getElementById('content');
 
 document.getElementById('openWebapp').addEventListener('click', () => {
