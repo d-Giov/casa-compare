@@ -280,99 +280,160 @@ function scrapeSubito() {
 function scrapeTecnocasa() {
   const data = {};
 
-  // Prezzo
+  // ── Prezzo ──
   const priceText = firstText(['.estate-price', '.current-price', '[class*="estate-price"]']);
   if (priceText) data.price = parsePrice(priceText);
 
-  // Titolo — h1 + tipo operazione dal breadcrumb
-  data.title = firstText(['h1', '[class*="estate-title"]']) || '';
-  // Arricchisci il titolo con città/zona dal document.title se disponibile
-  const titleMatch = document.title.match(/^(.+?)\s*-\s*Tecnocasa/i);
-  if (titleMatch && titleMatch[1].length > data.title.length) data.title = titleMatch[1].trim();
+  // ── Titolo: h1 + zona da h2.estate-subtitle ──
+  const h1 = firstText(['h1']) || '';
+  const subtitle = document.querySelector('h2.estate-subtitle')?.textContent?.trim() || '';
+  data.title = subtitle ? `${h1} - ${subtitle}` : h1;
+  // Fallback: estrai da document.title "Trilocale in vendita a Carugate - Milano. € 195.000, 90 Mq"
+  if (!data.title) {
+    const m = document.title.match(/^(.+?)\s*-\s*Tecnocasa/i);
+    if (m) data.title = m[1].trim();
+  }
 
-  // Indirizzo
+  // ── Indirizzo ──
   const addrEl = document.querySelector('.address');
   if (addrEl) data.address = addrEl.textContent.trim().replace(/\s+/g, ' ');
 
-  // Superficie dal title della pagina (es. "90 Mq")
-  const sqmMatch = document.title.match(/(\d{2,4})\s*Mq/i);
-  if (sqmMatch) data.sqm = parseInt(sqmMatch[1]);
+  // ── Superficie dal title (es. "90 Mq") ──
+  const sqmTitle = document.title.match(/(\d{2,4})\s*Mq/i);
+  if (sqmTitle) data.sqm = parseInt(sqmTitle[1]);
 
-  // Feature: legge coppie label/valore da .estate-features .row
+  // ── Feature principali: coppie label/valore da .estate-features .row ──
   const featureMap = {};
   document.querySelectorAll('.estate-features .row').forEach(row => {
     const label = row.querySelector('strong')?.textContent?.trim().replace(/:$/, '').toLowerCase() || '';
     const cols = row.querySelectorAll('.col');
     const value = cols[cols.length - 1]?.textContent?.trim() || '';
-    if (label && value) featureMap[label] = value;
+    if (label && value && label !== value) featureMap[label] = value;
   });
-  // Mappa feature → campi strutturati
-  const get = (...keys) => keys.map(k => featureMap[k]).find(v => v);
+  const get = (...keys) => keys.map(k => featureMap[k]).find(Boolean);
+
   if (!data.sqm) {
-    const sup = get('superficie', 'superficie commerciale', 'mq');
+    const sup = get('superficie', 'superficie commerciale', 'superficie totale', 'mq');
     if (sup) data.sqm = parseNumber(sup);
   }
-  data.rooms     = parseNumber(get('locali', 'vani', 'stanze') || '') || null;
-  data.bathrooms = parseNumber(get('bagni', 'bagno', 'n. bagni') || '') || null;
-  data.floor     = get('piano') || null;
-  data.bedrooms  = parseNumber(get('camere da letto', 'camere') || '') || null;
-  data.balcony   = get('balconi', 'balcone') || null;
-  data.heating   = get('riscaldamento') || null;
-  data.condition = get('stato', 'condizioni') || null;
-  data.furnished = get('arredamento') || null;
-  data.garage    = get('box auto', 'garage', 'posto auto') || null;
-  data.elevator  = get('ascensore') || null;
-  data.energy    = get('classe energetica', 'classe energ.') || null;
-  // Rimuovi campi null
-  Object.keys(data).forEach(k => { if (data[k] === null) delete data[k]; });
+  if (get('locali', 'vani', 'stanze')) data.rooms = parseNumber(get('locali', 'vani', 'stanze'));
+  if (get('bagni', 'bagno', 'n. bagni')) data.bathrooms = parseNumber(get('bagni', 'bagno', 'n. bagni'));
+  if (get('piano')) data.floor = get('piano');
+  if (get('camere da letto', 'camere')) data.bedrooms = parseNumber(get('camere da letto', 'camere'));
+  if (get('balconi', 'balcone')) data.balcony = get('balconi', 'balcone');
+  if (get('riscaldamento')) data.heating = get('riscaldamento');
+  if (get('stato', 'condizioni')) data.condition = get('stato', 'condizioni');
+  if (get('arredamento')) data.furnished = get('arredamento');
+  if (get('box auto', 'garage', 'posto auto')) data.garage = get('box auto', 'garage', 'posto auto');
+  if (get('ascensore')) data.elevator = get('ascensore');
+  if (get('anno di costruzione', 'anno costruzione')) data.buildYear = get('anno di costruzione', 'anno costruzione');
+  const refVal = featureMap['rif.'] || featureMap['rif'] || featureMap['riferimento'];
+  if (refVal) data.externalRef = refVal;
 
-  // Descrizione
+  // ── Efficienza energetica ──
+  // Classe attiva: .square.active span dentro la sezione energia
+  const energyH2 = [...document.querySelectorAll('h2')].find(e => e.textContent.includes('Efficienza energetica'));
+  if (energyH2) {
+    const section = energyH2.nextElementSibling;
+    if (section) {
+      const activeSquare = section.querySelector('.square.active span');
+      if (activeSquare) data.energyClass = activeSquare.textContent.trim();
+      // EP globale
+      const epMatch = section.textContent.match(/EP globale non rinnovabile:\s*([\d.,]+\s*kW\s*h\/m²\s*anno)/i);
+      if (epMatch) data.energyEP = epMatch[1].trim();
+      // Anno costruzione (anche dalla sezione energia)
+      const yearMatch = section.textContent.match(/Anno di costruzione:\s*(\d{4})/i);
+      if (yearMatch && !data.buildYear) data.buildYear = yearMatch[1];
+    }
+  }
+
+  // ── Altre caratteristiche: tag + descrizione dei locali ──
+  const altreH2 = [...document.querySelectorAll('h2')].find(e => e.textContent.includes('Altre caratteristiche'));
+  if (altreH2) {
+    const section = altreH2.nextElementSibling;
+    if (section) {
+      // Tag (es. "Balcone", "Portineria", "Ascensore"...)
+      const tags = [...section.querySelectorAll('.tag span')].map(e => e.textContent.trim()).filter(Boolean);
+      if (tags.length) data.extras = tags;
+      // Descrizione dei locali
+      const localiLabel = [...section.querySelectorAll('strong')].find(e => e.textContent.includes('Descrizione dei locali'));
+      if (localiLabel) {
+        const localiTags = [];
+        let next = localiLabel.parentElement?.nextElementSibling;
+        while (next) {
+          next.querySelectorAll('.tag span').forEach(s => {
+            const t = s.textContent.trim();
+            if (t) localiTags.push(t);
+          });
+          next = next.nextElementSibling;
+        }
+        if (localiTags.length) data.roomsDescription = localiTags;
+      }
+    }
+  }
+
+  // ── Descrizione testuale ──
   data.description = firstText([
     '.estate-description-container',
-    '.col-md-6.estate-description',
     '[class*="estate-description"]',
   ]);
 
-  // Immagini — lazy loaded: src reale è in data-src
-  // Cerca nella gallery principale (.estate-detail) e nel carousel
+  // ── Immagini: CSS background-image su .lazy-image ──
   const imgSeen = new Set();
   const imgs = [];
-  document.querySelectorAll(
-    '.estate-detail img[data-src], [class*="estate-image"] img[data-src], [class*="media-gallery"] img[data-src], img[data-src]'
-  ).forEach(img => {
-    const src = img.dataset.src || '';
-    if (src && src.startsWith('http') && !src.includes('gif') && !src.includes('logo') && !src.includes('icons') && !imgSeen.has(src)) {
+  document.querySelectorAll('.lazy-image').forEach(el => {
+    // Prova data-src prima (più veloce)
+    let src = el.dataset.src || el.dataset.bg || '';
+    // Poi child img
+    if (!src) src = el.querySelector('img')?.src || el.querySelector('img')?.dataset.src || '';
+    // Poi CSS background-image
+    if (!src) {
+      const bg = window.getComputedStyle(el).backgroundImage;
+      const m = bg.match(/url\(["']?(.+?)["']?\)/);
+      if (m) src = m[1];
+    }
+    if (src && src.startsWith('http') && !src.includes('.svg') && !src.includes('logo') && !imgSeen.has(src)) {
       imgSeen.add(src);
       imgs.push(src);
     }
   });
-  // Fallback: img già caricate con src reale (non placeholder gif)
+  // Fallback: img con src medialabtc già caricate
   if (imgs.length === 0) {
     document.querySelectorAll('img').forEach(img => {
       const src = img.src || '';
-      if (src.includes('medialabtc') || src.includes('tecnocasa') && src.includes('estate')) {
-        if (!imgSeen.has(src)) { imgSeen.add(src); imgs.push(src); }
+      if (src.includes('medialabtc') && !imgSeen.has(src)) {
+        imgSeen.add(src); imgs.push(src);
       }
     });
   }
   data.images = imgs.slice(0, 20);
 
-  // Agenzia
-  data.agencyName = firstText([
-    '.card-detail [class*="agency"]',
-    '.affiliato',
-    '[class*="agency-name"]',
-    '.estate-detail [class*="name"]',
-  ]);
-  // Fallback: estrai "Affiliato: XYZ" dal testo
-  if (!data.agencyName) {
-    const m = document.querySelector('.estate-detail')?.textContent?.match(/Affiliato:\s*([^\n]+)/);
-    if (m) data.agencyName = m[1].trim().slice(0, 100);
+  // ── Agenzia ──
+  // "Immobile proposto da Agenzia Tecnocasa: Affiliato: XYZ" → isAgency = true
+  const agencyBlock = document.querySelector('.agency-new, .agency-card');
+  if (agencyBlock) {
+    const text = agencyBlock.textContent;
+    if (text.includes('Agenzia Tecnocasa') || text.includes('Affiliato')) {
+      data.isAgency = true;
+      const m = text.match(/Affiliato:\s*([^\n,]+)/);
+      if (m) data.agencyName = m[1].trim().slice(0, 100);
+    } else if (text.toLowerCase().includes('privato') || text.toLowerCase().includes('private')) {
+      data.isAgency = false;
+      data.agencyName = 'Privato';
+    }
   }
-
-  // Codice riferimento
-  const refVal = featureMap['rif.'] || featureMap['rif'] || featureMap['riferimento'];
-  if (refVal) data.externalRef = refVal;
+  // Se non trovato, prova il fallback
+  if (data.isAgency === undefined) {
+    const h4 = [...document.querySelectorAll('h4')].find(e => e.textContent.includes('Agenzia Tecnocasa'));
+    if (h4) {
+      data.isAgency = true;
+      const affiliatoEl = document.querySelector('.agency-data');
+      if (affiliatoEl) {
+        const m = affiliatoEl.textContent.match(/Affiliato:\s*([^\n]+)/);
+        if (m) data.agencyName = m[1].trim().slice(0, 100);
+      }
+    }
+  }
 
   data.source = 'tecnocasa';
   return data;
