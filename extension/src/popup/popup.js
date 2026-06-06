@@ -67,7 +67,7 @@ function renderLoading() {
 }
 function renderNotProperty() {
   content.innerHTML = `<div class="not-detected"><div class="icon">🔍</div>
-    <p>Questa non sembra una pagina di annuncio.<br>Naviga su Idealista o Immobiliare.it</p></div>`;
+    <p>Questa non sembra una pagina di annuncio.<br>Naviga su un portale immobiliare (Idealista, Immobiliare.it, Casa.it, Subito.it…)</p></div>`;
 }
 function renderNotAuth() {
   content.innerHTML = `<div class="state-auth">

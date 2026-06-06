@@ -9,31 +9,116 @@ function parsePrice(text) {
 }
 function parseNumber(text) {
   if (!text) return null;
-  const match = String(text).match(/\d+/);
-  return match ? parseInt(match[0], 10) : null;
+  const match = String(text).match(/\d+[\.,]?\d*/);
+  return match ? parseInt(match[0].replace(',', '.'), 10) : null;
+}
+// Restituisce il testo del primo elemento che matcha uno dei selettori
+function firstText(selectors) {
+  for (const sel of selectors) {
+    try {
+      const el = document.querySelector(sel);
+      const t = el?.textContent?.trim();
+      if (t && t.length > 1) return t;
+    } catch (_) {}
+  }
+  return null;
+}
+// Raccoglie immagini da più selettori, deduplicando
+function collectImages(selectors, limit = 10) {
+  const seen = new Set();
+  const imgs = [];
+  for (const sel of selectors) {
+    if (imgs.length >= limit) break;
+    try {
+      document.querySelectorAll(sel).forEach(img => {
+        const src = img.src || img.dataset.src || img.dataset.lazySrc || img.dataset.original;
+        if (src && src.startsWith('http') && !src.includes('logo') && !src.includes('avatar') && !seen.has(src)) {
+          seen.add(src);
+          imgs.push(src);
+        }
+      });
+    } catch (_) {}
+  }
+  return imgs.slice(0, limit);
 }
 
 // ─── SCRAPER IDEALISTA ───────────────────────────────────────────────────────
 function scrapeIdealista() {
   const data = {};
-  const priceEl = document.querySelector('.info-data-price span, [class*="price-info"] span');
-  if (priceEl) data.price = parsePrice(priceEl.textContent);
-  const titleEl = document.querySelector('h1.main-info__title-main, [class*="main-info__title"]');
-  if (titleEl) data.title = titleEl.textContent.trim();
-  const addressEl = document.querySelector('[class*="main-info__title-minor"], .header-map-address');
-  if (addressEl) data.address = addressEl.textContent.trim();
-  document.querySelectorAll('.info-features span').forEach(el => {
+
+  // Prezzo — prova più selettori in ordine di affidabilità
+  const priceText = firstText([
+    'span.info-data-price',
+    '[class*="info-data-price"]',
+    'section.price-info span[class*="price"]',
+    '[class*="price-info"] span',
+    '[class*="price-features"] span',
+    'div[class*="price"] strong',
+    '[data-testid="price"]',
+  ]);
+  if (priceText) data.price = parsePrice(priceText);
+
+  // Titolo
+  data.title = firstText([
+    'h1.main-info__title-main',
+    '[class*="main-info__title-main"]',
+    'h1[class*="title"]',
+    'h1',
+  ]);
+
+  // Indirizzo
+  data.address = firstText([
+    'span.main-info__title-minor',
+    '[class*="main-info__title-minor"]',
+    '.header-map-address',
+    '[class*="address"]',
+    'div[class*="location"]',
+  ]);
+
+  // Caratteristiche (superficie, locali, piano)
+  const featEls = document.querySelectorAll(
+    '.info-features span, [class*="info-features"] span, [class*="details-property"] li, ul[class*="features"] li'
+  );
+  featEls.forEach(el => {
     const text = el.textContent.trim().toLowerCase();
-    if (text.includes('m²') || text.includes('mq')) data.sqm = parseNumber(text);
-    if (text.includes('local') || text.includes('stanz')) data.rooms = parseNumber(text);
-    if (text.includes('piano')) data.floor = text;
+    if ((text.includes('m²') || text.includes('mq') || text.includes('m2')) && !data.sqm) {
+      data.sqm = parseNumber(text);
+    }
+    if ((text.includes('local') || text.includes('stanz') || text.includes('vani')) && !data.rooms) {
+      data.rooms = parseNumber(text);
+    }
+    if (text.includes('bagn') && !data.bathrooms) data.bathrooms = parseNumber(text);
+    if (text.includes('piano') && !data.floor) data.floor = text;
   });
-  const descEl = document.querySelector('.comment .expandable-text, [class*="description"] p');
-  if (descEl) data.description = descEl.textContent.trim();
-  data.images = Array.from(document.querySelectorAll('.multimedia-slider img, [class*="image-gallery"] img'))
-    .map(img => img.src || img.dataset.src).filter(s => s && s.startsWith('http')).slice(0, 10);
-  const agEl = document.querySelector('.advertiser-name, [class*="agency-name"]');
-  if (agEl) data.agencyName = agEl.textContent.trim();
+
+  // Descrizione
+  data.description = firstText([
+    '.comment .expandable-text',
+    '[class*="description"] p',
+    '[class*="description__text"]',
+    'div[class*="comment"] p',
+    '#descriptionContainer',
+    '.adCommentsLanguage',
+  ]);
+
+  // Immagini
+  data.images = collectImages([
+    '.multimedia-slider img',
+    '[class*="image-gallery"] img',
+    '[class*="multimedia"] img',
+    '[class*="gallery"] img',
+    'picture img',
+  ]);
+
+  // Agenzia
+  data.agencyName = firstText([
+    '.advertiser-name',
+    '[class*="agency-name"]',
+    '[class*="advertiser"]',
+    '[class*="agency"] span',
+    '[class*="contact-info"] [class*="name"]',
+  ]);
+
   data.source = 'idealista';
   return data;
 }
@@ -41,115 +126,392 @@ function scrapeIdealista() {
 // ─── SCRAPER IMMOBILIARE.IT ──────────────────────────────────────────────────
 function scrapeImmobiliare() {
   const data = {};
-  const priceEl = document.querySelector('[class*="price__main"], .prices__price');
-  if (priceEl) data.price = parsePrice(priceEl.textContent);
-  const titleEl = document.querySelector('h1[class*="title"], .title__title');
-  if (titleEl) data.title = titleEl.textContent.trim();
-  const addressEl = document.querySelector('[class*="address"], .address__city');
-  if (addressEl) data.address = addressEl.textContent.trim();
-  const descEl = document.querySelector('[class*="description"] p, .description__text');
-  if (descEl) data.description = descEl.textContent.trim();
-  data.images = Array.from(document.querySelectorAll('[class*="gallery"] img, [class*="slider"] img'))
-    .map(img => img.src || img.dataset.src).filter(s => s && s.startsWith('http')).slice(0, 10);
-  const agEl = document.querySelector('[class*="agency__name"], [class*="advertiser__name"]');
-  if (agEl) data.agencyName = agEl.textContent.trim();
+
+  const priceText = firstText([
+    '[class*="price__main-price"]',
+    '[class*="price__main"]',
+    '.prices__price',
+    '[class*="price-main"]',
+    '[data-testid="price"]',
+    '[class*="price"] strong',
+    '[class*="listing-price"]',
+  ]);
+  if (priceText) data.price = parsePrice(priceText);
+
+  data.title = firstText([
+    'h1[class*="title"]',
+    'h1[class*="listing-title"]',
+    '.title__title',
+    'h1',
+  ]);
+
+  data.address = firstText([
+    '[class*="address__title"]',
+    '[class*="address__city"]',
+    '[class*="address"]',
+    '[class*="location__main"]',
+    '[class*="geo"]',
+  ]);
+
+  // Feature list
+  const featureEls = document.querySelectorAll(
+    '[class*="features__list"] li, [class*="features"] dt, [class*="characteristic"] li, dl[class*="detail"] dt'
+  );
+  featureEls.forEach(el => {
+    const text = el.textContent.trim().toLowerCase();
+    const value = el.nextElementSibling?.textContent?.trim() || text;
+    if ((text.includes('superf') || text.includes('m²') || text.includes('mq')) && !data.sqm) {
+      data.sqm = parseNumber(value) || parseNumber(text);
+    }
+    if ((text.includes('local') || text.includes('stanz') || text.includes('vani')) && !data.rooms) {
+      data.rooms = parseNumber(value) || parseNumber(text);
+    }
+    if (text.includes('bagn') && !data.bathrooms) {
+      data.bathrooms = parseNumber(value) || parseNumber(text);
+    }
+    if (text.includes('piano') && !data.floor) data.floor = value || text;
+  });
+
+  data.description = firstText([
+    '[class*="description__text"]',
+    '[class*="description"] p',
+    '.description__text',
+    '[class*="listing-description"] p',
+  ]);
+
+  data.images = collectImages([
+    '[class*="gallery"] img',
+    '[class*="slider"] img',
+    '[class*="carousel"] img',
+    'picture img',
+  ]);
+
+  data.agencyName = firstText([
+    '[class*="agency__name"]',
+    '[class*="advertiser__name"]',
+    '[class*="agency-name"]',
+    '[class*="agency"] strong',
+  ]);
+
   data.source = 'immobiliare';
+  return data;
+}
+
+// ─── SCRAPER CASA.IT ─────────────────────────────────────────────────────────
+function scrapeCasa() {
+  const data = {};
+
+  const priceText = firstText([
+    '[class*="price"] strong',
+    '[class*="price"]',
+    '[data-testid="price"]',
+    '.nd-mediaObject__price',
+    '[class*="listing-price"]',
+  ]);
+  if (priceText) data.price = parsePrice(priceText);
+
+  data.title = firstText(['h1[class*="title"]', 'h1[class*="listing"]', 'h1']);
+  data.address = firstText(['[class*="address"]', '[class*="location"]', '[class*="geo"]']);
+
+  document.querySelectorAll('[class*="features"] li, [class*="caratteristiche"] li').forEach(el => {
+    const text = el.textContent.trim().toLowerCase();
+    if ((text.includes('m²') || text.includes('mq')) && !data.sqm) data.sqm = parseNumber(text);
+    if ((text.includes('local') || text.includes('stanz')) && !data.rooms) data.rooms = parseNumber(text);
+    if (text.includes('bagn') && !data.bathrooms) data.bathrooms = parseNumber(text);
+  });
+
+  data.description = firstText(['[class*="description"] p', '[class*="description"]']);
+  data.images = collectImages(['[class*="gallery"] img', '[class*="slider"] img', 'picture img']);
+  data.agencyName = firstText(['[class*="agency"]', '[class*="agenzia"]', '[class*="advertiser"]']);
+  data.source = 'casa.it';
+  return data;
+}
+
+// ─── SCRAPER SUBITO.IT ───────────────────────────────────────────────────────
+function scrapeSubito() {
+  const data = {};
+
+  const priceText = firstText([
+    '[class*="price"] strong',
+    '[class*="AdPrice"]',
+    '[class*="price--big"]',
+    '[data-ref="price"]',
+    '[class*="price"]',
+  ]);
+  if (priceText) data.price = parsePrice(priceText);
+
+  data.title = firstText(['h1[class*="title"]', '[class*="AdTitle"]', 'h1']);
+  data.address = firstText([
+    '[class*="AdLocation"]',
+    '[class*="location"]',
+    '[class*="geo"]',
+    '[data-ref="location"]',
+  ]);
+
+  // Subito usa una lista di features chiave-valore
+  document.querySelectorAll('[class*="features"] li, [class*="feature"] li, dl dt').forEach(el => {
+    const text = el.textContent.trim().toLowerCase();
+    const value = el.nextElementSibling?.textContent?.trim() || '';
+    if ((text.includes('superf') || text.includes('m²') || text.includes('mq')) && !data.sqm) {
+      data.sqm = parseNumber(value) || parseNumber(text);
+    }
+    if ((text.includes('local') || text.includes('stanz')) && !data.rooms) {
+      data.rooms = parseNumber(value) || parseNumber(text);
+    }
+    if (text.includes('bagn') && !data.bathrooms) {
+      data.bathrooms = parseNumber(value) || parseNumber(text);
+    }
+    if (text.includes('piano') && !data.floor) data.floor = value || text;
+  });
+
+  data.description = firstText(['[class*="description"] p', '[class*="AdDescription"]']);
+  data.images = collectImages([
+    '[class*="gallery"] img',
+    '[class*="AdImage"] img',
+    '[class*="slider"] img',
+    'picture img',
+  ]);
+  data.agencyName = firstText(['[class*="agency"]', '[class*="advertiser"]', '[class*="seller"]']);
+  data.source = 'subito.it';
+  return data;
+}
+
+// ─── SCRAPER WIKICASA.IT ─────────────────────────────────────────────────────
+function scrapeWikicasa() {
+  const data = {};
+  const priceText = firstText(['[class*="price"]', '[data-testid="price"]']);
+  if (priceText) data.price = parsePrice(priceText);
+  data.title = firstText(['h1', '[class*="title"]']);
+  data.address = firstText(['[class*="address"]', '[class*="location"]']);
+  document.querySelectorAll('[class*="feature"] li, [class*="caratteristic"] li').forEach(el => {
+    const text = el.textContent.trim().toLowerCase();
+    if ((text.includes('m²') || text.includes('mq')) && !data.sqm) data.sqm = parseNumber(text);
+    if ((text.includes('local') || text.includes('stanz')) && !data.rooms) data.rooms = parseNumber(text);
+  });
+  data.description = firstText(['[class*="description"] p', '[class*="description"]']);
+  data.images = collectImages(['[class*="gallery"] img', '[class*="slider"] img', 'picture img']);
+  data.agencyName = firstText(['[class*="agency"]', '[class*="agenzia"]']);
+  data.source = 'wikicasa.it';
   return data;
 }
 
 // ─── SCRAPER GENERICO ────────────────────────────────────────────────────────
 function scrapeGeneric() {
   const data = {};
-  // Schema.org
+
+  // 1. Schema.org — fonte più affidabile se presente
   document.querySelectorAll('script[type="application/ld+json"]').forEach(s => {
     try {
-      const items = JSON.parse(s.textContent);
-      (Array.isArray(items) ? items : [items]).forEach(sc => {
-        const t = (sc['@type'] || '').toLowerCase();
-        if (t.includes('realestate') || t.includes('apartment') || t.includes('house') || t.includes('residence')) {
-          if (sc.name && !data.title) data.title = sc.name;
-          if (sc.description && !data.description) data.description = sc.description;
-          if (sc.address && !data.address) {
-            const a = sc.address;
-            data.address = [a.streetAddress, a.addressLocality, a.addressRegion].filter(Boolean).join(', ');
-          }
-          if (sc.offers?.price && !data.price) data.price = parseInt(sc.offers.price);
-          if (sc.floorSize?.value && !data.sqm) data.sqm = parseInt(sc.floorSize.value);
-          if (sc.numberOfRooms && !data.rooms) data.rooms = parseInt(sc.numberOfRooms);
+      const raw = JSON.parse(s.textContent);
+      const items = Array.isArray(raw) ? raw : [raw];
+      items.forEach(sc => {
+        const type = (sc['@type'] || '').toLowerCase();
+        const isProperty = type.includes('realestate') || type.includes('apartment') ||
+          type.includes('house') || type.includes('residence') || type.includes('singlefamily') ||
+          type.includes('product');
+        if (!isProperty) return;
+        if (sc.name && !data.title) data.title = sc.name;
+        if (sc.description && !data.description) data.description = sc.description.slice(0, 2000);
+        if (sc.address && !data.address) {
+          const a = sc.address;
+          data.address = [a.streetAddress, a.addressLocality, a.addressRegion, a.addressCountry]
+            .filter(Boolean).join(', ');
+        }
+        if (!data.price) {
+          const p = sc.offers?.price || sc.price;
+          if (p) data.price = parseInt(String(p).replace(/[^\d]/g, ''), 10) || null;
+        }
+        if (sc.floorSize?.value && !data.sqm) data.sqm = parseInt(sc.floorSize.value);
+        if (sc.numberOfRooms && !data.rooms) data.rooms = parseInt(sc.numberOfRooms);
+        if (sc.image && !data.images) {
+          const imgs = Array.isArray(sc.image) ? sc.image : [sc.image];
+          data.images = imgs.filter(i => typeof i === 'string').slice(0, 10);
         }
       });
     } catch (_) {}
   });
-  // Open Graph
-  const og = p => document.querySelector(`meta[property="og:${p}"]`)?.content;
-  if (!data.title) data.title = og('title') || document.title;
-  if (!data.description) data.description = og('description') || document.querySelector('meta[name="description"]')?.content || '';
-  // Prezzo heuristica
+
+  // 2. Open Graph / meta
+  const ogMeta = p => document.querySelector(`meta[property="og:${p}"]`)?.content;
+  const meta = n => document.querySelector(`meta[name="${n}"]`)?.content;
+  if (!data.title) data.title = ogMeta('title') || meta('title') || document.title;
+  if (!data.description) {
+    data.description = ogMeta('description') || meta('description') || '';
+  }
+
+  // 3. Prezzo — selettori comuni cross-portale
   if (!data.price) {
-    for (const sel of ['[itemprop="price"]', '[data-price]', '[class*="price"] strong', '[class*="prezzo"]']) {
-      const el = document.querySelector(sel);
-      if (el) { const p = parsePrice(el.dataset?.price || el.textContent); if (p && p > 1000) { data.price = p; break; } }
+    const priceText = firstText([
+      '[itemprop="price"]',
+      '[data-price]',
+      '[class*="price"] strong',
+      '[class*="price"] b',
+      '[class*="prezzo"] strong',
+      '[class*="prezzo"]',
+      '[class*="price--main"]',
+      '[class*="price-main"]',
+      '[class*="listing-price"]',
+      '[class*="price"]',
+    ]);
+    if (priceText) {
+      const p = parsePrice(priceText);
+      if (p && p > 1000) data.price = p;
+    }
+    // Fallback: cerca pattern "€ 123.000" o "123.000 €" nel testo visibile
+    if (!data.price) {
+      const m = document.body.innerText.match(/(?:€\s*|EUR\s*)(\d[\d\.,]{3,})|(\d[\d\.,]{3,})\s*(?:€|EUR)/i);
+      if (m) {
+        const raw = (m[1] || m[2]).replace(/\./g, '').replace(',', '.');
+        const p = parseInt(raw);
+        if (p > 10000) data.price = p;
+      }
     }
   }
-  // Indirizzo
+
+  // 4. Indirizzo
   if (!data.address) {
-    for (const sel of ['[class*="address"]', '[class*="indirizzo"]', '[itemprop="address"]']) {
-      const el = document.querySelector(sel);
-      if (el?.textContent?.trim().length > 5) { data.address = el.textContent.trim(); break; }
-    }
+    data.address = firstText([
+      '[itemprop="address"]',
+      '[class*="address"]',
+      '[class*="indirizzo"]',
+      '[class*="location"]',
+      '[class*="localita"]',
+      '[class*="geo"]',
+      '[data-testid*="address"]',
+      '[data-testid*="location"]',
+    ]);
   }
-  // Superficie
+
+  // 5. Superficie — cerca in feature list poi nel body
   if (!data.sqm) {
-    const m = document.body.innerText.match(/(\d{2,4})\s*(m²|mq|m2|metri quadri)/i);
+    const sqmText = firstText([
+      '[class*="surface"]',
+      '[class*="superficie"]',
+      '[class*="sqm"]',
+      '[class*="mq"]',
+      '[itemprop="floorSize"]',
+    ]);
+    if (sqmText) data.sqm = parseNumber(sqmText);
+  }
+  if (!data.sqm) {
+    const m = document.body.innerText.match(/(\d{2,4})\s*(m²|mq|m2|metri\s*quadri)/i);
     if (m) data.sqm = parseInt(m[1]);
   }
-  // Locali
+
+  // 6. Locali
+  if (!data.rooms) {
+    const roomText = firstText([
+      '[class*="rooms"]',
+      '[class*="locali"]',
+      '[class*="stanze"]',
+      '[itemprop="numberOfRooms"]',
+    ]);
+    if (roomText) data.rooms = parseNumber(roomText);
+  }
   if (!data.rooms) {
     const m = document.body.innerText.match(/(\d{1,2})\s*(local[ei]|stanz[ae]|vani)/i);
     if (m) data.rooms = parseInt(m[1]);
   }
-  // Immagini
-  const imgSet = new Set();
-  const ogImg = og('image');
-  if (ogImg) imgSet.add(ogImg);
-  for (const sel of ['[class*="gallery"] img', '[class*="slider"] img', '[class*="carousel"] img', 'figure img']) {
-    document.querySelectorAll(sel).forEach(img => {
-      const src = img.src || img.dataset.src || img.dataset.lazySrc;
-      if (src && src.startsWith('http') && !src.includes('logo')) imgSet.add(src);
+
+  // 7. Bagni
+  if (!data.bathrooms) {
+    const m = document.body.innerText.match(/(\d{1,2})\s*bagn[oi]/i);
+    if (m) data.bathrooms = parseInt(m[1]);
+  }
+
+  // 8. Immagini
+  if (!data.images || data.images.length === 0) {
+    const ogImg = ogMeta('image');
+    const seen = new Set();
+    const imgs = ogImg ? [ogImg] : [];
+    if (ogImg) seen.add(ogImg);
+    collectImages([
+      '[class*="gallery"] img',
+      '[class*="slider"] img',
+      '[class*="carousel"] img',
+      '[class*="photo"] img',
+      '[class*="foto"] img',
+      'figure img',
+      'picture img',
+      '[class*="listing"] img',
+    ]).forEach(src => {
+      if (!seen.has(src)) { seen.add(src); imgs.push(src); }
     });
-    if (imgSet.size >= 10) break;
+    data.images = imgs.slice(0, 10);
   }
-  data.images = Array.from(imgSet).slice(0, 10);
-  // Agenzia
-  for (const sel of ['[class*="agency"]', '[class*="agenzia"]', '[class*="advertiser"]', '[class*="seller"]']) {
-    const el = document.querySelector(sel);
-    if (el?.textContent?.trim()) { data.agencyName = el.textContent.trim().slice(0, 100); break; }
+
+  // 9. Agenzia
+  if (!data.agencyName) {
+    data.agencyName = firstText([
+      '[class*="agency"]',
+      '[class*="agenzia"]',
+      '[class*="advertiser"]',
+      '[class*="seller"]',
+      '[class*="agent-name"]',
+      '[itemprop="name"]',
+    ]);
+    if (data.agencyName) data.agencyName = data.agencyName.slice(0, 100);
   }
+
   data.source = new URL(window.location.href).hostname.replace('www.', '');
   return data;
 }
 
 // ─── RILEVAMENTO PORTALE ─────────────────────────────────────────────────────
 const SCRAPERS = {
-  'idealista.it': scrapeIdealista,
-  'idealista.com': scrapeIdealista,
-  'immobiliare.it': scrapeImmobiliare,
+  'idealista.it':     scrapeIdealista,
+  'idealista.com':    scrapeIdealista,
+  'immobiliare.it':   scrapeImmobiliare,
+  'casa.it':          scrapeCasa,
+  'subito.it':        scrapeSubito,
+  'wikicasa.it':      scrapeWikicasa,
 };
 
+// Parole chiave immobiliari nel testo della pagina
+const PROPERTY_KEYWORDS = [
+  'locali', 'vani', 'mq', 'm²', 'stanze', 'bagni', 'piano', 'superficie',
+  'vendita', 'affitto', 'mutuo', 'immobile', 'appartamento', 'villa',
+  'trilocale', 'bilocale', 'monolocale', 'quadrilocale', 'attico',
+  'mansarda', 'box auto', 'garage', 'cantina', 'posto auto',
+];
+
 function isPropertyPage() {
-  const url = window.location.href;
-  const patterns = [/\/annunci\/\d+/, /immobili\/\d+/, /\/vendita\//, /\/affitto\//, /\/-\d+\.htm/, /property\//];
-  if (patterns.some(p => p.test(url))) return true;
-  // Controlla schema.org
+  const url = window.location.href.toLowerCase();
+
+  // Pattern URL comuni
+  const urlPatterns = [
+    /\/annunci\//,
+    /\/annuncio\//,
+    /\/immobili?\//,
+    /\/vendita\//,
+    /\/affitto\//,
+    /\/\d{5,}\//,          // ID numerico lungo nell'URL
+    /\/-\d+\.htm/,
+    /\/property\//,
+    /\/listing\//,
+    /\/detail\//,
+    /\/scheda\//,
+    /[_-]\d{5,}[_-]?/,
+  ];
+  if (urlPatterns.some(p => p.test(url))) return true;
+
+  // Schema.org real estate
   for (const s of document.querySelectorAll('script[type="application/ld+json"]')) {
     try {
       const items = JSON.parse(s.textContent);
       if ((Array.isArray(items) ? items : [items]).some(sc => {
         const t = (sc['@type'] || '').toLowerCase();
-        return t.includes('realestate') || t.includes('apartment') || t.includes('house');
+        return t.includes('realestate') || t.includes('apartment') ||
+          t.includes('house') || t.includes('residence');
       })) return true;
     } catch (_) {}
   }
+
+  // Conta keyword immobiliari nel testo visibile — almeno 3 = probabilmente un annuncio
+  const bodyText = document.body.innerText.toLowerCase();
+  const hits = PROPERTY_KEYWORDS.filter(kw => bodyText.includes(kw)).length;
+  if (hits >= 3) return true;
+
   return false;
 }
 
@@ -157,6 +519,16 @@ function scrape() {
   const hostname = new URL(window.location.href).hostname.replace('www.', '');
   const scraperFn = Object.entries(SCRAPERS).find(([site]) => hostname.includes(site))?.[1] || scrapeGeneric;
   const data = scraperFn();
+
+  // Cleanup: rimuovi campi vuoti o troppo corti
+  if (data.title && data.title.length < 3) delete data.title;
+  if (data.address && data.address.length < 3) delete data.address;
+  if (data.description && data.description.length < 10) delete data.description;
+  if (!data.images || data.images.length === 0) delete data.images;
+
+  // Fallback titolo
+  if (!data.title) data.title = document.title.split(/[|\-–]/)[0].trim() || 'Annuncio immobiliare';
+
   data.url = window.location.href;
   data.pageTitle = document.title;
   data.isPropertyPage = isPropertyPage();
@@ -165,29 +537,22 @@ function scrape() {
 }
 
 // ─── AUTO-SYNC TOKEN DA WEBAPP ───────────────────────────────────────────────
-// Quando siamo sulla webapp, legge il token Supabase dalla localStorage e lo
-// salva nell'extension così il popup può usarlo senza login separato.
 function syncAuthToken() {
   try {
-    // Supabase salva la sessione con chiave: sb-[project_ref]-auth-token
     const PROJECT_REF = 'dgittnthayzxqodqdfrh';
     const key = `sb-${PROJECT_REF}-auth-token`;
     const raw = localStorage.getItem(key);
     if (!raw) return;
     const session = JSON.parse(raw);
     const token = session?.access_token;
-    if (token) {
-      chrome.runtime.sendMessage({ type: 'SAVE_AUTH_TOKEN', token });
-    }
+    if (token) chrome.runtime.sendMessage({ type: 'SAVE_AUTH_TOKEN', token });
   } catch (_) {}
 }
 
 const hostname = window.location.hostname;
 if (hostname === 'localhost' || hostname === '127.0.0.1') {
-  // Siamo sulla webapp: sincronizza subito e ogni volta che localStorage cambia
   syncAuthToken();
   window.addEventListener('storage', syncAuthToken);
-  // Controlla anche dopo un secondo (caricamento asincrono)
   setTimeout(syncAuthToken, 1000);
 }
 
