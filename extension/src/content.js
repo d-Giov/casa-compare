@@ -277,7 +277,7 @@ function scrapeSubito() {
 }
 
 // ─── SCRAPER TECNOCASA.IT ────────────────────────────────────────────────────
-function scrapeTecnocasa() {
+async function scrapeTecnocasa() {
   const data = {};
 
   // ── Prezzo ──
@@ -372,45 +372,33 @@ function scrapeTecnocasa() {
     }
   }
 
-  // ── Descrizione testuale: raccoglie tutti i paragrafi (evita troncatura) ──
-  const descEl = document.querySelector('.estate-description-container, [class*="estate-description-container"]');
-  if (descEl) {
-    const parts = [...descEl.querySelectorAll('p')].map(p => p.textContent.trim()).filter(Boolean);
-    data.description = parts.length ? parts.join('\n\n') : descEl.textContent.trim();
-  }
-
-  // ── Immagini: CSS background-image su .lazy-image ──
+  // ── Immagini ──
   const imgSeen = new Set();
   const imgs = [];
+  const addImg = src => {
+    if (src && src.startsWith('http') && !src.includes('.svg') && !src.includes('logo') &&
+        !src.includes('icons') && !src.includes('data:') && !imgSeen.has(src)) {
+      imgSeen.add(src); imgs.push(src);
+    }
+  };
+  // 1. data-src su .lazy-image (attributo Vue prima che il CSS venga applicato)
+  document.querySelectorAll('.lazy-image[data-src]').forEach(el => addImg(el.dataset.src));
+  // 2. CSS background-image su .lazy-image (dopo il render Vue)
   document.querySelectorAll('.lazy-image').forEach(el => {
-    // Prova data-src prima (più veloce)
-    let src = el.dataset.src || el.dataset.bg || '';
-    // Poi child img
-    if (!src) src = el.querySelector('img')?.src || el.querySelector('img')?.dataset.src || '';
-    // Poi CSS background-image
-    if (!src) {
-      const bg = window.getComputedStyle(el).backgroundImage;
-      const m = bg.match(/url\(["']?(.+?)["']?\)/);
-      if (m) src = m[1];
-    }
-    if (src && src.startsWith('http') && !src.includes('.svg') && !src.includes('logo') && !imgSeen.has(src)) {
-      imgSeen.add(src);
-      imgs.push(src);
-    }
+    const bg = window.getComputedStyle(el).backgroundImage;
+    const m = bg && bg !== 'none' ? bg.match(/url\(["']?([^"')]+)["']?\)/) : null;
+    if (m) addImg(m[1]);
+    const ci = el.querySelector('img');
+    if (ci) { addImg(ci.src); addImg(ci.dataset.src); }
   });
-  // Fallback: img con src medialabtc già caricate
-  if (imgs.length === 0) {
-    document.querySelectorAll('img').forEach(img => {
-      const src = img.src || '';
-      if (src.includes('medialabtc') && !imgSeen.has(src)) {
-        imgSeen.add(src); imgs.push(src);
-      }
-    });
-  }
+  // 3. Qualsiasi img con src medialabtc (CDN Tecnocasa)
+  document.querySelectorAll('img').forEach(img => {
+    if ((img.src || '').includes('medialabtc')) addImg(img.src);
+    if ((img.dataset.src || '').includes('medialabtc')) addImg(img.dataset.src);
+  });
   data.images = imgs.slice(0, 20);
 
   // ── Agenzia ──
-  // "Immobile proposto da Agenzia Tecnocasa: Affiliato: XYZ" → isAgency = true
   const agencyBlock = document.querySelector('.agency-new, .agency-card');
   if (agencyBlock) {
     const text = agencyBlock.textContent;
@@ -423,7 +411,6 @@ function scrapeTecnocasa() {
       data.agencyName = 'Privato';
     }
   }
-  // Se non trovato, prova il fallback
   if (data.isAgency === undefined) {
     const h4 = [...document.querySelectorAll('h4')].find(e => e.textContent.includes('Agenzia Tecnocasa'));
     if (h4) {
@@ -435,6 +422,27 @@ function scrapeTecnocasa() {
       }
     }
   }
+
+  // ── Descrizione: clicca "Mostra tutto" per ottenere il testo completo ──
+  const showMoreBtn = document.querySelector('.modal-opener.description button');
+  if (showMoreBtn) {
+    try { showMoreBtn.click(); } catch (_) {}
+    // Aspetta max 2s che il modal Vue si popoli
+    await pollUntil(
+      () => (document.querySelector('.description-modal .estate-description-container, .description-modal p')
+              ?.textContent?.trim().length || 0) > 50,
+      100, 2000
+    );
+  }
+  const modalDesc = document.querySelector('.description-modal .estate-description-container, .description-modal p');
+  const mainDesc  = document.querySelector('.estate-description-container');
+  const descEl    = (modalDesc?.textContent?.trim().length > 50) ? modalDesc : mainDesc;
+  if (descEl) {
+    const parts = [...descEl.querySelectorAll('p')].map(p => p.textContent.trim()).filter(Boolean);
+    data.description = parts.length ? parts.join('\n\n') : descEl.textContent.trim();
+  }
+  // Chiudi il modal se era stato aperto
+  try { document.querySelector('.description-modal .close, .description-modal [aria-label="Close"], .full-screen-modal .modal-close')?.click(); } catch (_) {}
 
   data.source = 'tecnocasa';
   return data;
@@ -680,10 +688,10 @@ function isPropertyPage() {
   return false;
 }
 
-function scrape() {
+async function scrape() {
   const hostname = new URL(window.location.href).hostname.replace('www.', '');
   const scraperFn = Object.entries(SCRAPERS).find(([site]) => hostname.includes(site))?.[1] || scrapeGeneric;
-  const data = scraperFn();
+  const data = await scraperFn();
 
   // Cleanup: rimuovi campi vuoti o troppo corti
   if (data.title && data.title.length < 3) delete data.title;
@@ -722,42 +730,45 @@ if (hostname === 'localhost' || hostname === '127.0.0.1') {
 }
 
 // ─── WAIT FOR SPA RENDER ─────────────────────────────────────────────────────
-// App Vue/React possono iniettare il DOM dopo document_idle.
-// Aspetta che un selettore appaia oppure che passi il timeout.
-function waitForElement(selector, timeoutMs = 4000) {
+// Polling ogni 300ms fino a che la condizione è vera o scade il timeout.
+function pollUntil(condition, intervalMs = 300, timeoutMs = 6000) {
   return new Promise(resolve => {
-    if (document.querySelector(selector)) { resolve(); return; }
-    const observer = new MutationObserver(() => {
-      if (document.querySelector(selector)) { observer.disconnect(); resolve(); }
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
-    setTimeout(() => { observer.disconnect(); resolve(); }, timeoutMs);
+    if (condition()) { resolve(); return; }
+    const start = Date.now();
+    const id = setInterval(() => {
+      if (condition() || Date.now() - start >= timeoutMs) {
+        clearInterval(id);
+        resolve();
+      }
+    }, intervalMs);
   });
 }
 
-// Selettori che indicano che la SPA ha finito di renderizzare il contenuto
-function getSPAReadySelector() {
-  const h = window.location.hostname;
-  if (h.includes('tecnocasa')) return '.lazy-image, .estate-price, .estate-description-container';
-  if (h.includes('idealista'))  return '.info-data-price, .main-info__title-main';
-  if (h.includes('immobiliare')) return '[class*="price__main"], h1[class*="title"]';
-  return null;
+function isTecnocasaReady() {
+  // Aspetta che ci siano lazy-image con data-src reale (medialabtc) O che la descrizione sia presente
+  const hasImages = !!document.querySelector('.lazy-image[data-src]');
+  const hasPricePlusdesc = !!document.querySelector('.estate-price') &&
+                           !!document.querySelector('.estate-description-container');
+  return hasImages || hasPricePlusdesc;
 }
 
 // ─── LISTENER ────────────────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'SCRAPE_PROPERTY') {
-    const readySel = getSPAReadySelector();
+    const h = window.location.hostname;
+    const needsWait = h.includes('tecnocasa') || h.includes('idealista') || h.includes('immobiliare');
+    const condition = h.includes('tecnocasa') ? isTecnocasaReady : () => true;
     const doScrape = () => {
-      try { sendResponse({ success: true, data: scrape() }); }
-      catch (err) { sendResponse({ success: false, error: err.message }); }
+      scrape()
+        .then(data => sendResponse({ success: true, data }))
+        .catch(err => sendResponse({ success: false, error: err.message }));
     };
-    if (readySel) {
-      waitForElement(readySel, 4000).then(doScrape);
+    if (needsWait) {
+      pollUntil(condition, 300, 6000).then(doScrape);
     } else {
       doScrape();
     }
-    return true; // mantieni canale aperto per risposta asincrona
+    return true;
   }
   if (msg.type === 'GET_AUTH_TOKEN') {
     syncAuthToken();
