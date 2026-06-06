@@ -372,11 +372,12 @@ function scrapeTecnocasa() {
     }
   }
 
-  // ── Descrizione testuale ──
-  data.description = firstText([
-    '.estate-description-container',
-    '[class*="estate-description"]',
-  ]);
+  // ── Descrizione testuale: raccoglie tutti i paragrafi (evita troncatura) ──
+  const descEl = document.querySelector('.estate-description-container, [class*="estate-description-container"]');
+  if (descEl) {
+    const parts = [...descEl.querySelectorAll('p')].map(p => p.textContent.trim()).filter(Boolean);
+    data.description = parts.length ? parts.join('\n\n') : descEl.textContent.trim();
+  }
 
   // ── Immagini: CSS background-image su .lazy-image ──
   const imgSeen = new Set();
@@ -720,11 +721,43 @@ if (hostname === 'localhost' || hostname === '127.0.0.1') {
   setTimeout(syncAuthToken, 1000);
 }
 
+// ─── WAIT FOR SPA RENDER ─────────────────────────────────────────────────────
+// App Vue/React possono iniettare il DOM dopo document_idle.
+// Aspetta che un selettore appaia oppure che passi il timeout.
+function waitForElement(selector, timeoutMs = 4000) {
+  return new Promise(resolve => {
+    if (document.querySelector(selector)) { resolve(); return; }
+    const observer = new MutationObserver(() => {
+      if (document.querySelector(selector)) { observer.disconnect(); resolve(); }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    setTimeout(() => { observer.disconnect(); resolve(); }, timeoutMs);
+  });
+}
+
+// Selettori che indicano che la SPA ha finito di renderizzare il contenuto
+function getSPAReadySelector() {
+  const h = window.location.hostname;
+  if (h.includes('tecnocasa')) return '.lazy-image, .estate-price, .estate-description-container';
+  if (h.includes('idealista'))  return '.info-data-price, .main-info__title-main';
+  if (h.includes('immobiliare')) return '[class*="price__main"], h1[class*="title"]';
+  return null;
+}
+
 // ─── LISTENER ────────────────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'SCRAPE_PROPERTY') {
-    try { sendResponse({ success: true, data: scrape() }); }
-    catch (err) { sendResponse({ success: false, error: err.message }); }
+    const readySel = getSPAReadySelector();
+    const doScrape = () => {
+      try { sendResponse({ success: true, data: scrape() }); }
+      catch (err) { sendResponse({ success: false, error: err.message }); }
+    };
+    if (readySel) {
+      waitForElement(readySel, 4000).then(doScrape);
+    } else {
+      doScrape();
+    }
+    return true; // mantieni canale aperto per risposta asincrona
   }
   if (msg.type === 'GET_AUTH_TOKEN') {
     syncAuthToken();
