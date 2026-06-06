@@ -276,6 +276,108 @@ function scrapeSubito() {
   return data;
 }
 
+// ─── SCRAPER TECNOCASA.IT ────────────────────────────────────────────────────
+function scrapeTecnocasa() {
+  const data = {};
+
+  // Prezzo
+  const priceText = firstText(['.estate-price', '.current-price', '[class*="estate-price"]']);
+  if (priceText) data.price = parsePrice(priceText);
+
+  // Titolo — h1 + tipo operazione dal breadcrumb
+  data.title = firstText(['h1', '[class*="estate-title"]']) || '';
+  // Arricchisci il titolo con città/zona dal document.title se disponibile
+  const titleMatch = document.title.match(/^(.+?)\s*-\s*Tecnocasa/i);
+  if (titleMatch && titleMatch[1].length > data.title.length) data.title = titleMatch[1].trim();
+
+  // Indirizzo
+  const addrEl = document.querySelector('.address');
+  if (addrEl) data.address = addrEl.textContent.trim().replace(/\s+/g, ' ');
+
+  // Superficie dal title della pagina (es. "90 Mq")
+  const sqmMatch = document.title.match(/(\d{2,4})\s*Mq/i);
+  if (sqmMatch) data.sqm = parseInt(sqmMatch[1]);
+
+  // Feature: legge coppie label/valore da .estate-features .row
+  const featureMap = {};
+  document.querySelectorAll('.estate-features .row').forEach(row => {
+    const label = row.querySelector('strong')?.textContent?.trim().replace(/:$/, '').toLowerCase() || '';
+    const cols = row.querySelectorAll('.col');
+    const value = cols[cols.length - 1]?.textContent?.trim() || '';
+    if (label && value) featureMap[label] = value;
+  });
+  // Mappa feature → campi strutturati
+  const get = (...keys) => keys.map(k => featureMap[k]).find(v => v);
+  if (!data.sqm) {
+    const sup = get('superficie', 'superficie commerciale', 'mq');
+    if (sup) data.sqm = parseNumber(sup);
+  }
+  data.rooms     = parseNumber(get('locali', 'vani', 'stanze') || '') || null;
+  data.bathrooms = parseNumber(get('bagni', 'bagno', 'n. bagni') || '') || null;
+  data.floor     = get('piano') || null;
+  data.bedrooms  = parseNumber(get('camere da letto', 'camere') || '') || null;
+  data.balcony   = get('balconi', 'balcone') || null;
+  data.heating   = get('riscaldamento') || null;
+  data.condition = get('stato', 'condizioni') || null;
+  data.furnished = get('arredamento') || null;
+  data.garage    = get('box auto', 'garage', 'posto auto') || null;
+  data.elevator  = get('ascensore') || null;
+  data.energy    = get('classe energetica', 'classe energ.') || null;
+  // Rimuovi campi null
+  Object.keys(data).forEach(k => { if (data[k] === null) delete data[k]; });
+
+  // Descrizione
+  data.description = firstText([
+    '.estate-description-container',
+    '.col-md-6.estate-description',
+    '[class*="estate-description"]',
+  ]);
+
+  // Immagini — lazy loaded: src reale è in data-src
+  // Cerca nella gallery principale (.estate-detail) e nel carousel
+  const imgSeen = new Set();
+  const imgs = [];
+  document.querySelectorAll(
+    '.estate-detail img[data-src], [class*="estate-image"] img[data-src], [class*="media-gallery"] img[data-src], img[data-src]'
+  ).forEach(img => {
+    const src = img.dataset.src || '';
+    if (src && src.startsWith('http') && !src.includes('gif') && !src.includes('logo') && !src.includes('icons') && !imgSeen.has(src)) {
+      imgSeen.add(src);
+      imgs.push(src);
+    }
+  });
+  // Fallback: img già caricate con src reale (non placeholder gif)
+  if (imgs.length === 0) {
+    document.querySelectorAll('img').forEach(img => {
+      const src = img.src || '';
+      if (src.includes('medialabtc') || src.includes('tecnocasa') && src.includes('estate')) {
+        if (!imgSeen.has(src)) { imgSeen.add(src); imgs.push(src); }
+      }
+    });
+  }
+  data.images = imgs.slice(0, 20);
+
+  // Agenzia
+  data.agencyName = firstText([
+    '.card-detail [class*="agency"]',
+    '.affiliato',
+    '[class*="agency-name"]',
+    '.estate-detail [class*="name"]',
+  ]);
+  // Fallback: estrai "Affiliato: XYZ" dal testo
+  if (!data.agencyName) {
+    const m = document.querySelector('.estate-detail')?.textContent?.match(/Affiliato:\s*([^\n]+)/);
+    if (m) data.agencyName = m[1].trim().slice(0, 100);
+  }
+
+  // Codice riferimento
+  const refVal = featureMap['rif.'] || featureMap['rif'] || featureMap['riferimento'];
+  if (refVal) data.externalRef = refVal;
+
+  data.source = 'tecnocasa';
+  return data;
+}
+
 // ─── SCRAPER WIKICASA.IT ─────────────────────────────────────────────────────
 function scrapeWikicasa() {
   const data = {};
@@ -465,6 +567,7 @@ const SCRAPERS = {
   'casa.it':          scrapeCasa,
   'subito.it':        scrapeSubito,
   'wikicasa.it':      scrapeWikicasa,
+  'tecnocasa.it':     scrapeTecnocasa,
 };
 
 // Parole chiave immobiliari nel testo della pagina
