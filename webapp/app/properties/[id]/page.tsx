@@ -34,7 +34,7 @@ export default async function PropertyPage({ params }: { params: { id: string } 
 
   const p = property as Property;
   const docs = (documents || []) as PropertyDocument[];
-  const mortgageData = externalData?.find(e => e.type === 'mortgage_rates');
+  const mortgageData = externalData?.find((e: any) => e.type === 'mortgage_rates');
 
   // Calcolo mutuo di esempio (80% LTV, 25 anni)
   const loanAmount = p.price ? Math.round(p.price * 0.8) : null;
@@ -128,16 +128,16 @@ export default async function PropertyPage({ params }: { params: { id: string } 
             <p className="text-gray-700 text-sm mb-5">{p.ai_summary}</p>
 
             <div className="grid sm:grid-cols-2 gap-4 mb-4">
-              {p.ai_pros?.length > 0 && (
+              {(p.ai_pros ?? []).length > 0 && (
                 <div className="bg-green-50 rounded-xl p-4">
                   <p className="font-semibold text-green-800 text-sm mb-2">✅ Punti di forza</p>
-                  <ul className="space-y-1">{p.ai_pros.map((pro, i) => <li key={i} className="text-sm text-green-700">• {pro}</li>)}</ul>
+                  <ul className="space-y-1">{(p.ai_pros ?? []).map((pro, i) => <li key={i} className="text-sm text-green-700">• {pro}</li>)}</ul>
                 </div>
               )}
-              {p.ai_cons?.length > 0 && (
+              {(p.ai_cons ?? []).length > 0 && (
                 <div className="bg-red-50 rounded-xl p-4">
                   <p className="font-semibold text-red-800 text-sm mb-2">⚠️ Punti critici</p>
-                  <ul className="space-y-1">{p.ai_cons.map((con, i) => <li key={i} className="text-sm text-red-700">• {con}</li>)}</ul>
+                  <ul className="space-y-1">{(p.ai_cons ?? []).map((con, i) => <li key={i} className="text-sm text-red-700">• {con}</li>)}</ul>
                 </div>
               )}
             </div>

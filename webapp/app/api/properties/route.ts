@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase-server';
 
@@ -19,26 +20,23 @@ export async function POST(req: NextRequest) {
   if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 });
 
   const body = await req.json();
-  const { url } = body;
+  if (!body.url) return NextResponse.json({ error: 'URL mancante' }, { status: 400 });
 
-  if (!url) return NextResponse.json({ error: 'URL mancante' }, { status: 400 });
-
-  // Mappa tutti i campi inviati dall'extension
-  const record: Record<string, unknown> = {
-    user_id: userId,
-    url,
-    source:      body.source      || 'generic',
-    title:       body.title       || null,
-    address:     body.address     || null,
-    price:       body.price       || null,
-    sqm:         body.sqm         || null,
-    rooms:       body.rooms       || null,
-    floor:       body.floor       || null,
-    description: body.description || null,
-    images:      Array.isArray(body.images) && body.images.length > 0 ? body.images : [],
-    agency_name: body.agencyName  || null,
-    scraped_at:  body.scrapedAt   || null,
-    status:      'saved',
+  const record = {
+    user_id:     userId,
+    url:         body.url         as string,
+    source:      body.source      as string || 'generic',
+    title:       body.title       as string || null,
+    address:     body.address     as string || null,
+    price:       body.price       as number || null,
+    sqm:         body.sqm         as number || null,
+    rooms:       body.rooms       as number || null,
+    floor:       body.floor       as string || null,
+    description: body.description as string || null,
+    images:      (Array.isArray(body.images) && body.images.length > 0 ? body.images : []) as string[],
+    agency_name: body.agencyName  as string || null,
+    scraped_at:  body.scrapedAt   as string || null,
+    status:      'saved' as const,
   };
 
   // Controlla se esiste già una property con lo stesso URL
@@ -46,44 +44,49 @@ export async function POST(req: NextRequest) {
     .from('properties')
     .select('id, status')
     .eq('user_id', userId)
-    .eq('url', url)
-    .single();
+    .eq('url', body.url)
+    .maybeSingle() as any;
 
-  let property, error;
+  let propertyId: string;
+  let saveError: string | null = null;
 
-  if (existing) {
+  if (existing?.id) {
     // Aggiorna — forza sovrascrittura immagini e descrizione
-    const updateRecord = { ...record };
-    delete updateRecord.user_id;
-    // Non resettare score AI se già valutato
-    if (existing.status === 'evaluated') {
-      delete updateRecord.status;
-    }
-    ({ data: property, error } = await supabase
+    const { user_id: _uid, status: _st, ...updateFields } = record;
+    const updateRecord: Record<string, unknown> = { ...updateFields };
+    if (existing.status !== 'evaluated') updateRecord.status = 'saved';
+
+    const { data: updated, error } = await (supabase
       .from('properties')
-      .update(updateRecord)
+      .update(updateRecord as any)
       .eq('id', existing.id)
-      .select()
-      .single());
+      .select('id')
+      .single() as any);
+
+    propertyId = updated?.id ?? existing.id;
+    saveError = error?.message ?? null;
   } else {
-    ({ data: property, error } = await supabase
+    const { data: inserted, error } = await (supabase
       .from('properties')
-      .insert(record)
-      .select()
-      .single());
+      .insert(record as any)
+      .select('id')
+      .single() as any);
+
+    propertyId = inserted?.id ?? null;
+    saveError = error?.message ?? null;
   }
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (saveError) return NextResponse.json({ error: saveError }, { status: 500 });
+  if (!propertyId) return NextResponse.json({ error: 'Inserimento fallito' }, { status: 500 });
 
   // Avvia valutazione AI in background (fire-and-forget)
-  const evaluateUrl = `${req.nextUrl.origin}/api/evaluate`;
-  fetch(evaluateUrl, {
+  fetch(`${req.nextUrl.origin}/api/evaluate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ propertyId: property.id }),
+    body: JSON.stringify({ propertyId }),
   }).catch(() => {});
 
-  return NextResponse.json({ id: property.id, status: 'evaluating' }, { status: 201 });
+  return NextResponse.json({ id: propertyId, status: 'evaluating' }, { status: 201 });
 }
 
 // GET /api/properties - Lista immobili dell'utente

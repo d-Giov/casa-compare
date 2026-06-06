@@ -59,7 +59,7 @@ export default async function ComparePage({ searchParams }: { searchParams: { id
             <div className="flex flex-wrap gap-2">
               {properties.map(p => (
                 <a key={p.id}
-                  href={`/properties/compare?ids=${[...new Set([...selectedIds.filter(id => id !== p.id), ...(selectedIds.includes(p.id) ? [] : [p.id])])].slice(0,3).join(',')}`}
+                  href={`/properties/compare?ids=${Array.from(new Set([...selectedIds.filter(id => id !== p.id), ...(selectedIds.includes(p.id) ? [] : [p.id])])).slice(0,3).join(',')}`}
                   className={`text-xs px-3 py-1.5 rounded-full border transition ${selectedIds.includes(p.id) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400'}`}>
                   {p.title?.slice(0, 25) || p.address?.slice(0, 25) || 'Immobile'}
                 </a>

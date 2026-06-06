@@ -24,6 +24,9 @@ export interface Property {
   ai_summary: string | null;
   ai_pros: string[] | null;
   ai_cons: string[] | null;
+  ai_price_assessment: string | null;
+  ai_price_assessment_detail: string | null;
+  ai_recommendation: string | null;
   ai_evaluated_at: string | null;
   status: 'saved' | 'evaluating' | 'evaluated' | 'archived';
 }
