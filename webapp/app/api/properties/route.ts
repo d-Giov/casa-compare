@@ -19,31 +19,59 @@ export async function POST(req: NextRequest) {
   if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 });
 
   const body = await req.json();
-  const { url, source, title, address, price, sqm, rooms, floor, description, images, agencyName, scrapedAt } = body;
+  const { url } = body;
 
   if (!url) return NextResponse.json({ error: 'URL mancante' }, { status: 400 });
 
-  // Upsert: se lo stesso URL esiste già per questo utente, aggiorna
-  const { data: property, error } = await supabase
+  // Mappa tutti i campi inviati dall'extension
+  const record: Record<string, unknown> = {
+    user_id: userId,
+    url,
+    source:      body.source      || 'generic',
+    title:       body.title       || null,
+    address:     body.address     || null,
+    price:       body.price       || null,
+    sqm:         body.sqm         || null,
+    rooms:       body.rooms       || null,
+    floor:       body.floor       || null,
+    description: body.description || null,
+    images:      Array.isArray(body.images) && body.images.length > 0 ? body.images : [],
+    agency_name: body.agencyName  || null,
+    scraped_at:  body.scrapedAt   || null,
+    status:      'saved',
+  };
+
+  // Controlla se esiste già una property con lo stesso URL
+  const { data: existing } = await supabase
     .from('properties')
-    .upsert({
-      user_id: userId,
-      url,
-      source: source || 'generic',
-      title: title || null,
-      address: address || null,
-      price: price || null,
-      sqm: sqm || null,
-      rooms: rooms || null,
-      floor: floor || null,
-      description: description || null,
-      images: images || [],
-      agency_name: agencyName || null,
-      scraped_at: scrapedAt || null,
-      status: 'saved',
-    }, { onConflict: 'user_id,url' })
-    .select()
+    .select('id, status')
+    .eq('user_id', userId)
+    .eq('url', url)
     .single();
+
+  let property, error;
+
+  if (existing) {
+    // Aggiorna — forza sovrascrittura immagini e descrizione
+    const updateRecord = { ...record };
+    delete updateRecord.user_id;
+    // Non resettare score AI se già valutato
+    if (existing.status === 'evaluated') {
+      delete updateRecord.status;
+    }
+    ({ data: property, error } = await supabase
+      .from('properties')
+      .update(updateRecord)
+      .eq('id', existing.id)
+      .select()
+      .single());
+  } else {
+    ({ data: property, error } = await supabase
+      .from('properties')
+      .insert(record)
+      .select()
+      .single());
+  }
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 

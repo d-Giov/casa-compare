@@ -62,7 +62,9 @@ export default async function PropertyPage({ params }: { params: { id: string } 
           {p.images?.length > 0 && (
             <div className="grid grid-cols-3 gap-1 h-64">
               {p.images.slice(0, 3).map((img, i) => (
-                <img key={i} src={img} alt="" className="w-full h-full object-cover" style={i === 0 ? { gridColumn: 'span 2' } : {}} />
+                <img key={i} src={img} alt="" referrerPolicy="no-referrer" crossOrigin="anonymous"
+                  className="w-full h-full object-cover" style={i === 0 ? { gridColumn: 'span 2' } : {}}
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
               ))}
             </div>
           )}

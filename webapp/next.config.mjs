@@ -7,6 +7,11 @@ const nextConfig = {
       { protocol: 'https', hostname: '*.immobiliare.it' },
       { protocol: 'https', hostname: '*.casa.it' },
       { protocol: 'https', hostname: '*.supabase.co' },
+      { protocol: 'https', hostname: 'cdn-media.medialabtc.it' },
+      { protocol: 'https', hostname: '*.medialabtc.it' },
+      { protocol: 'https', hostname: '*.tecnocasa.it' },
+      { protocol: 'https', hostname: '*.subito.it' },
+      { protocol: 'https', hostname: '*.wikicasa.it' },
     ],
   },
   async headers() {
