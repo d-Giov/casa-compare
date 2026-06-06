@@ -111,6 +111,13 @@ async function main() {
     if (!data || !data.isPropertyPage) { renderNotProperty(); return; }
     if (!authToken) { renderNotAuth(); return; }
 
+    console.log('[CasaCompare] Scraped data:', JSON.stringify({
+      title: data.title,
+      price: data.price,
+      images: data.images,
+      description: data.description?.slice(0, 100),
+    }, null, 2));
+
     renderProperty(data, async () => {
       const btn = document.getElementById('saveBtn');
       const statusMsg = document.getElementById('statusMsg');
