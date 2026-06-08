@@ -39,16 +39,33 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Tipo non supportato' }, { status: 400 });
   }
 
-  // Upsert nel DB
-  const { data, error } = await supabase
+  // Salva nel DB (select → update o insert, senza onConflict)
+  const { data: existing } = await supabase
     .from('external_data')
-    .upsert({ property_id: propertyId, type, data: fetchedData, fetched_at: new Date().toISOString() },
-      { onConflict: 'property_id,type' })
-    .select()
-    .single();
+    .select('id')
+    .eq('property_id', propertyId)
+    .eq('type', type)
+    .maybeSingle();
+
+  let error: any = null;
+  let savedData: any = null;
+  if (existing?.id) {
+    const { data: updated, error: err } = await supabase
+      .from('external_data')
+      .update({ data: fetchedData, fetched_at: new Date().toISOString() })
+      .eq('id', existing.id)
+      .select().single();
+    error = err; savedData = updated;
+  } else {
+    const { data: inserted, error: err } = await supabase
+      .from('external_data')
+      .insert({ property_id: propertyId, type, data: fetchedData, fetched_at: new Date().toISOString() })
+      .select().single();
+    error = err; savedData = inserted;
+  }
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json(data);
+  return NextResponse.json(savedData);
 }
 
 // Tassi mutui aggiornati (fonte: Banca d'Italia / ABI - dati mock che puoi sostituire con scraping reale)

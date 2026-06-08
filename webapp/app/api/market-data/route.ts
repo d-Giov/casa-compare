@@ -199,15 +199,27 @@ Il JSON deve avere esattamente questa struttura:
     merged.valoreAttesoMedio = omiData?.valoreAtteso?.medio || Math.round(merged.prezzoMqMedio * property.sqm);
   }
 
-  // ── 5. Salva in external_data ──────────────────────────────────────────────
-  const { data: saved, error: saveError } = await supabase
+  // ── 5. Salva in external_data (select → update o insert, evita onConflict) ──
+  const { data: existing } = await supabase
     .from('external_data')
-    .upsert(
-      { property_id: propertyId, type: 'market_data', data: merged, fetched_at: new Date().toISOString() },
-      { onConflict: 'property_id,type' }
-    )
-    .select()
-    .single();
+    .select('id')
+    .eq('property_id', propertyId)
+    .eq('type', 'price_history')
+    .maybeSingle();
+
+  let saveError: any = null;
+  if (existing?.id) {
+    const { error } = await supabase
+      .from('external_data')
+      .update({ data: merged, fetched_at: new Date().toISOString() })
+      .eq('id', existing.id);
+    saveError = error;
+  } else {
+    const { error } = await supabase
+      .from('external_data')
+      .insert({ property_id: propertyId, type: 'price_history', data: merged, fetched_at: new Date().toISOString() });
+    saveError = error;
+  }
 
   if (saveError) {
     console.error('[market-data] Save error:', saveError);
@@ -231,7 +243,7 @@ export async function GET(req: NextRequest) {
     .from('external_data')
     .select('*')
     .eq('property_id', propertyId)
-    .eq('type', 'market_data')
+    .eq('type', 'price_history')
     .single();
 
   if (error || !data) return NextResponse.json({ data: null });

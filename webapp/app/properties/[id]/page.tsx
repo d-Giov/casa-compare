@@ -36,7 +36,7 @@ export default async function PropertyPage({ params }: { params: { id: string } 
   const p = property as Property;
   const docs = (documents || []) as PropertyDocument[];
   const mortgageData = externalData?.find((e: any) => e.type === 'mortgage_rates');
-  const marketData = externalData?.find((e: any) => e.type === 'market_data')?.data || null;
+  const marketData = externalData?.find((e: any) => e.type === 'price_history')?.data || null;
 
   // Calcolo mutuo di esempio (80% LTV, 25 anni)
   const loanAmount = p.price ? Math.round(p.price * 0.8) : null;
