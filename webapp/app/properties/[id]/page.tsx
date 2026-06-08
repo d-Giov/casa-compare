@@ -6,6 +6,7 @@ import { DOCUMENT_TYPE_LABELS } from '@/types';
 import type { Property, PropertyDocument } from '@/types';
 import PropertyActions from './PropertyActions';
 import DocumentUpload from './DocumentUpload';
+import MarketDataSection from './MarketDataSection';
 
 export default async function PropertyPage({ params }: { params: { id: string } }) {
   const supabase = await createServerSupabaseClient();
@@ -35,6 +36,7 @@ export default async function PropertyPage({ params }: { params: { id: string } 
   const p = property as Property;
   const docs = (documents || []) as PropertyDocument[];
   const mortgageData = externalData?.find((e: any) => e.type === 'mortgage_rates');
+  const marketData = externalData?.find((e: any) => e.type === 'market_data')?.data || null;
 
   // Calcolo mutuo di esempio (80% LTV, 25 anni)
   const loanAmount = p.price ? Math.round(p.price * 0.8) : null;
@@ -154,6 +156,9 @@ export default async function PropertyPage({ params }: { params: { id: string } 
             )}
           </div>
         )}
+
+        {/* Dati di Mercato */}
+        <MarketDataSection propertyId={p.id} initialData={marketData} />
 
         {/* Descrizione */}
         {p.description && (

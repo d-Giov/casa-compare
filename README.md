@@ -18,7 +18,7 @@ casa-compare/
 │   ├── manifest.json
 │   ├── icons/
 │   └── src/
-│       ├── content.js       # Scraper generico (inline, no imports)
+│       ├── content.js       # Scraper multi-portale (Idealista, Immobiliare.it, Tecnocasa, Casa.it, Subito.it, Wikicasa + generico)
 │       ├── background.js    # Service worker
 │       └── popup/
 │           ├── popup.html
@@ -28,14 +28,15 @@ casa-compare/
     │   ├── auth/            # Login, register, logout
     │   ├── dashboard/       # Lista immobili
     │   ├── properties/
-    │   │   ├── [id]/        # Dettaglio + documenti + AI
+    │   │   ├── [id]/        # Dettaglio + documenti + AI + dati di mercato
     │   │   └── compare/     # Confronto side-by-side
     │   └── api/
     │       ├── auth/token/      # Token per l'extension
     │       ├── properties/      # CRUD immobili
     │       ├── evaluate/        # Valutazione GPT-4o
     │       ├── documents/       # Upload + verifica AI
-    │       └── external-data/   # Dati esterni (mutui, OMI...)
+    │       ├── image-proxy/     # Proxy immagini CDN (bypass hotlink protection)
+    │       └── external-data/   # Dati di mercato (OMI, geocoding, trend prezzi)
     ├── lib/
     │   ├── supabase.ts          # Browser client
     │   ├── supabase-server.ts   # Server client (cookies)
@@ -84,7 +85,7 @@ Dalla cartella `webapp/`:
 
 ```bash
 npm install
-npm run dev        # → http://localhost:3000
+npm run dev        # → http://localhost:3001
 ```
 
 Oppure doppio click su `webapp/start-dev.bat`.
@@ -96,8 +97,6 @@ Oppure doppio click su `webapp/start-dev.bat`.
 3. **Carica estensione non pacchettizzata** → seleziona la cartella `extension/`
 4. L'icona CasaCompare appare nella barra di Chrome
 
-> **Nota porta**: se la webapp gira su 3001 invece di 3000, aggiorna `WEBAPP_URL` in `extension/src/popup/popup.js` e `extension/src/background.js`.
-
 ---
 
 ## Come funziona
@@ -106,7 +105,7 @@ Oppure doppio click su `webapp/start-dev.bat`.
 
 1. Apri la webapp → registrati → fai login
 2. Tieni la webapp **aperta in un tab** (serve per l'autenticazione automatica)
-3. In un altro tab, naviga su un annuncio (Idealista, Immobiliare.it, o qualsiasi portale)
+3. In un altro tab, naviga su un annuncio (Idealista, Immobiliare.it, Tecnocasa, ecc.)
 4. Clicca l'icona CasaCompare nella barra di Chrome
 5. Il popup rileva i dati dell'annuncio e legge automaticamente la tua sessione dalla webapp aperta
 6. Clicca **Salva e valuta** → l'immobile appare nella dashboard
@@ -124,7 +123,10 @@ L'extension legge il token di sessione direttamente dalla webapp aperta tramite 
 |---------|-------|
 | Scraping Idealista | ✅ |
 | Scraping Immobiliare.it | ✅ |
-| Scraper generico (schema.org + OG + heuristica) | ✅ |
+| Scraping Tecnocasa | ✅ |
+| Scraping Casa.it / Subito.it / Wikicasa | ✅ |
+| Scraper generico (schema.org + OG + euristiche) | ✅ |
+| Supporto SPA Vue/React (attesa render asincrono) | ✅ |
 | Popup Chrome con anteprima dati | ✅ |
 | Auth automatica extension dalla webapp | ✅ |
 | Dashboard immobili | ✅ |
@@ -134,7 +136,35 @@ L'extension legge il token di sessione direttamente dalla webapp aperta tramite 
 | Upload documenti + verifica AI | ✅ |
 | Confronto side-by-side (max 3) | ✅ |
 | Note manuali + commissione agenzia | ✅ |
-| Dati esterni (tassi mutui, OMI, quartiere) | ✅ (parziale) |
+| Proxy immagini CDN (bypass hotlink protection) | ✅ |
+| Prezzo medio al m² nella zona (OMI) | ✅ |
+| Trend prezzi zona (OMI + GPT-4o) | ✅ |
+| Tempo medio vendita stimato | ✅ |
+
+---
+
+## Dati di mercato esterni
+
+### Architettura
+
+| Fonte | Dati | Note |
+|-------|------|------|
+| **Dataset OMI statico** (`webapp/lib/omi-data.ts`) | Quotazioni €/m² per 30+ città italiane (centrale/semicentrale/periferica), trend annuo, tempo medio vendita | 2° sem 2024 – da aggiornare ogni semestre |
+| **Nominatim** (OpenStreetMap) | Geocoding indirizzo → lat/lon + nome città | API gratuita, nessuna chiave richiesta |
+| **GPT-4o** | Arricchimento contestuale: trend specifico per quartiere, analisi qualitativa della zona | Richiede `OPENAI_API_KEY` |
+
+### Come funziona (`POST /api/market-data`)
+
+1. L'indirizzo viene **geocodificato** con Nominatim → lat/lon + nome città
+2. Il nome città viene cercato nel **dataset OMI statico** → quotazioni €/m² per fascia (centrale/semi/periferica)
+3. La fascia viene determinata tramite **euristiche sull'indirizzo** (parole chiave: centro storico, navigli, periferia, ecc.)
+4. **GPT-4o** arricchisce l'analisi con contesto specifico per il quartiere, stima il trend locale e il tempo di vendita
+5. I dati vengono **fusi** (OMI per i prezzi, AI per il contesto) e salvati in `external_data`
+
+### Aggiornare il dataset OMI
+
+Il file `webapp/lib/omi-data.ts` va aggiornato ogni semestre con i valori ufficiali:
+→ [Quotazioni OMI – Agenzia delle Entrate](https://www.agenziaentrate.gov.it/portale/schede/fabbricatiterreni/omi/banche-dati/quotazioni-immobiliari)
 
 ---
 
